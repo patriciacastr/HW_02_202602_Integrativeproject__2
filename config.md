@@ -28,7 +28,7 @@ No hardcodear ninguno de estos valores en el código.
 - `path_renipress_raw`: data/raw/renipress.csv
 - `path_sigmed_raw`: data/raw/sigmed/CP_P.shp
 - `url_osm_peru`: https://download.geofabrik.de/south-america/peru-latest.osm.pbf
-- `fuente_limites_administrativos`: GEOGPSPERU (INEI actualizado), descarga manual 6 de setiembre 2026 — ver _download_manifest.md
+- `fuente_limites_administrativos`: GEOGPSPERU (INEI), descarga manual 6 setiembre 2026
 
 ## Población por centro poblado (resuelve el pendiente de SIGMED)
 
@@ -85,12 +85,13 @@ SIGMED (`data/raw/sigmed/CP_P.shp`, CRS ya en EPSG:4326, no requiere reproyecci�
 - `sigmed_col_nombre_cp`: NOMCP
 - `sigmed_col_lon`: XGD
 - `sigmed_col_lat`: YGD
-- `sigmed_col_poblacion`: RESUELTO — ver sección "Población por centro poblado" más abajo (fuente SIGRID/CENEPRED, cruzar por CODCP=codccpp)
+- `sigmed_col_poblacion`: RESUELTO — ver sección "Población por centro poblado" más arriba
 
 ## Polígonos administrativos (distrito, provincia, departamento)
 
 Fuente: GEOGPSPERU (shapefile INEI actualizado). CRS ya en EPSG:4326,
-confirmado por inspección — no requiere reproyección.
+confirmado por inspección — no requiere reproyección. Descarga manual
+6 de setiembre 2026 — ver _download_manifest.md.
 
 - `poligonos_fuente`: geogpsperu
 - `path_poligonos_distrito`: data/raw/limites_geogpsperu/distrito/DISTRITOS.shp
@@ -110,11 +111,24 @@ confirmado por inspección — no requiere reproyección.
 
 ## Ruteo (Fase 2)
 
-- `motor_ruteo`: OSRM  # opciones: OSRM | OSMNX | ORS
+Motor: OSRM local vía Docker (3 servidores, uno por perfil). El grafo se
+construyó a partir de un recorte de los 3 departamentos (con margen de 0.3°),
+no del `.pbf` de Perú completo — decisión tomada por restricción de RAM
+(8GB totales; el `.pbf` completo del país causaba OOM kill durante
+`osrm-extract`). Ver `src/obtener_bboxes.py` y `data/raw/peru-3departamentos.osm.pbf`.
+
+- `motor_ruteo`: OSRM
 - `perfiles`: ["car", "foot", "bike"]
 - `max_demand_points`: 5000
-- `estrategia_muestreo`: "poblacional_estratificada_por_distrito"  # aplica solo si se excede max_demand_points
+- `estrategia_muestreo`: "poblacional_estratificada_por_distrito"
 - `ors_api_key`: (dejar vacío si no se usa OpenRouteService; leer de variable de entorno ORS_API_KEY)
+- `osrm_puerto_car`: 5000
+- `osrm_puerto_foot`: 5001
+- `osrm_puerto_bike`: 5002
+- `osrm_max_table_size`: 40000
+- `ruteo_chunk_size_origenes`: 200
+- `path_routing_cache_dir`: data/processed/routing_cache/
+- `path_osrm_pbf_recortado`: data/raw/peru-3departamentos.osm.pbf
 
 ## Métricas (Fase 3)
 

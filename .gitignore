@@ -12,6 +12,8 @@ data/raw/*.prj
 data/raw/*.cpg
 data/raw/*.sbn
 data/raw/*.sbx
+data/raw/osrm/
+data/raw/osmium_tmp/
 
 # El manifiesto de descargas SÍ se versiona (documentación de fechas/fuentes)
 # data/raw/_download_manifest.md -- NO EXCLUIR

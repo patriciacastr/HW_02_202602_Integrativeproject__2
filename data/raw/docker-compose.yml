@@ -1,0 +1,42 @@
+version: "3.8"
+
+# Levanta los 3 servidores OSRM (uno por perfil) una vez que los grafos
+# ya fueron compilados con osrm-extract/partition/customize (ver README,
+# sección Fase 2, "Construir los grafos OSRM" -- ese paso es aparte, NO
+# lo hace este docker-compose).
+#
+# Uso:
+#   docker compose up -d       # levanta los 3 en segundo plano
+#   docker compose ps          # verifica que los 3 estén "healthy"/"running"
+#   docker compose down        # los apaga
+
+services:
+  osrm-car:
+    image: osrm/osrm-backend
+    container_name: osrm-car
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data/raw/osrm/car:/data
+    command: osrm-routed --algorithm mld --max-table-size 8000 /data/peru-3departamentos.osrm
+    restart: unless-stopped
+
+  osrm-foot:
+    image: osrm/osrm-backend
+    container_name: osrm-foot
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./data/raw/osrm/foot:/data
+    command: osrm-routed --algorithm mld --max-table-size 8000 /data/peru-3departamentos.osrm
+    restart: unless-stopped
+
+  osrm-bike:
+    image: osrm/osrm-backend
+    container_name: osrm-bike
+    ports:
+      - "5002:5000"
+    volumes:
+      - ./data/raw/osrm/bike:/data
+    command: osrm-routed --algorithm mld --max-table-size 8000 /data/peru-3departamentos.osrm
+    restart: unless-stopped
