@@ -1,0 +1,3 @@
+regla,n_flagged,pct_del_total,accion
+codigo_facility_duplicado,0,0.0,mantener_primera_ocurrencia_descartar_resto (documentar criterio de cuál es 'primera')
+encoding_utf8_vs_latin1,0,0.0,re-decodificar_columnas_afectadas y registrar tasa de recuperación

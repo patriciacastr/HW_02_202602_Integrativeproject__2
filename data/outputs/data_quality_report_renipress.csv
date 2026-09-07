@@ -1,0 +1,6 @@
+regla,n_flagged,pct_del_total,accion
+coordenadas_faltantes_o_cero,692,25.78,"descartar_de_computo_geoespacial (mantener fila, excluir de ruteo)"
+coordenadas_fuera_de_peru,0,0.0,candidato_a_swap_lat_lon (ver check_swapped_coords) o descartar si no aplica
+lat_lon_invertidos,0,0.0,corregir_automaticamente (swap) y registrar tasa de recuperación
+codigo_facility_duplicado,0,0.0,mantener_primera_ocurrencia_descartar_resto (documentar criterio de cuál es 'primera')
+encoding_utf8_vs_latin1,0,0.0,re-decodificar_columnas_afectadas y registrar tasa de recuperación
