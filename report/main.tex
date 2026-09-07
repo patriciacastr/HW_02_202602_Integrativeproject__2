@@ -1,0 +1,37 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{utf8}
+\usepackage[spanish]{babel}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\title{\textbf{Proyecto Golden Hour: Reporte de Accesibilidad Médica}}
+\author{Lambayeque, Ayacucho y San Martín}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Introducción}
+Este informe presenta el análisis geoespacial de tiempos de traslados viales hacia establecimientos de salud de nivel resolutivo (II-1 a III-E) para los departamentos de Lambayeque, Ayacucho y San Martín.
+
+\section{Resultados}
+La Figura \ref{fig:dist} exhibe la distribución de tiempos de traslados, mientras que la Tabla \ref{tab:worst} resume los distritos con mayores limitaciones de infraestructura.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\linewidth]{figures/fig_access_distribution.pdf}
+    \caption{Distribución distrital de accesibilidad médica.}
+    \label{fig:dist}
+\end{figure}
+
+\begin{table}[htbp]
+    \centering
+    \caption{Distritos prioritarios según brechas de acceso}
+    \input{../data/outputs/table_worst_districts.tex}
+    \label{tab:worst}
+\end{table}
+
+\end{document}
+
