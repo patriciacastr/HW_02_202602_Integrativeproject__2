@@ -1,0 +1,52 @@
+# === Datos crudos pesados (se descargan con acquisition.py o manualmente, no se versionan) ===
+data/raw/*.pbf
+data/raw/*.osm
+data/raw/renipress.csv
+data/raw/sigmed/
+data/raw/*.shp
+data/raw/*.shx
+data/raw/*.dbf
+data/raw/*.prj
+data/raw/*.cpg
+data/raw/*.sbn
+data/raw/*.sbx
+data/raw/_download_manifest.md
+
+# === Datos procesados/salidas pesadas ===
+data/processed/*.parquet
+data/processed/*.gpkg
+data/outputs/*.parquet
+
+# Mantener las carpetas vacías versionadas
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/outputs/.gitkeep
+
+# === Entornos virtuales de Python ===
+.venv/
+venv/
+env/
+
+# === Cache de Python ===
+__pycache__/
+*.pyc
+*.pyo
+
+# === Logs (quedan locales, no se versionan; solo el .gitkeep) ===
+logs/*.log
+!logs/.gitkeep
+
+# === Streamlit ===
+.streamlit/secrets.toml
+
+# === LaTeX (archivos auxiliares de compilación, no el .tex ni el .pdf final) ===
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+
+# === Sistema operativo / editor ===
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
