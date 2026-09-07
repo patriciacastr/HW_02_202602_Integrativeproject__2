@@ -1,6 +1,6 @@
 """
 run_phase1.py — Orquesta la Fase 1 completa: carga, filtra a los 3 departamentos,
-valida, y exporta.
+valida (incluyendo polígonos distritales), y exporta.
 
 Uso:
     python -m src.run_phase1
@@ -8,6 +8,7 @@ Uso:
 Salidas:
     data/processed/renipress_clean.parquet   (GeoDataFrame con geometry de puntos)
     data/processed/sigmed_clean.parquet      (GeoDataFrame con geometry de puntos)
+    data/processed/poligonos.gpkg            (capas: distrito, provincia, departamento)
     data/outputs/data_quality_report_renipress.csv
     data/outputs/data_quality_report_sigmed.csv
 """
@@ -22,6 +23,11 @@ import pandas as pd
 from shapely.geometry import Point
 
 from src.config_loader import Config, load_config
+from src.poligonos import (
+    cargar_poligonos,
+    guardar_poligonos_geopackage,
+    validar_punto_en_distrito,
+)
 from src.validation import (
     build_quality_report,
     check_bbox,
@@ -97,6 +103,74 @@ def load_sigmed(cfg: Config) -> gpd.GeoDataFrame:
     return gdf
 
 
+def load_poblacion(cfg: Config) -> gpd.GeoDataFrame | None:
+    path = Path(cfg.path_poblacion_raw)
+    if not path.exists():
+        log.warning(
+            "No se encontró %s — ver config.md para la fuente de población (GeoPerú/INEI, "
+            "descarga manual). Se continúa SIN datos de población por ahora.",
+            path,
+        )
+        return None
+    gdf = gpd.read_file(path)
+    if gdf.crs is None or str(gdf.crs) != "EPSG:4326":
+        gdf = gdf.to_crs("EPSG:4326")
+    gdf = gdf[gdf[cfg.poblacion_col_departamento].isin(
+        cfg.departamentos)].copy()
+    log.info("Población (GeoPerú/INEI) leída: %d centros poblados", len(gdf))
+    cols = [cfg.poblacion_col_total,
+            cfg.poblacion_col_departamento, "geometry"]
+    return gpd.GeoDataFrame(gdf[cols], geometry="geometry", crs="EPSG:4326")
+
+
+def cruzar_poblacion(sigmed: gpd.GeoDataFrame, poblacion: gpd.GeoDataFrame | None, cfg: Config) -> gpd.GeoDataFrame:
+    """Cruza SIGMED con la población por PROXIMIDAD ESPACIAL (no por código —
+    los esquemas de codificación de SIGMED y GeoPerú/INEI no son compatibles,
+    ver config.md). Usa vecino más cercano dentro de un radio máximo en metros."""
+    if poblacion is None:
+        return sigmed.assign(**{cfg.poblacion_col_total: pd.NA})
+
+    antes = len(sigmed)
+    max_dist = cfg.get("poblacion_max_distancia_metros", 500)
+
+    # Reproyectar a Web Mercator (metros) solo para calcular distancias; el
+    # resultado final se guarda en las coordenadas originales de sigmed (EPSG:4326).
+    sigmed_m = sigmed.to_crs("EPSG:3857")
+    poblacion_m = poblacion.to_crs("EPSG:3857")
+
+    cruce = gpd.sjoin_nearest(
+        sigmed_m,
+        poblacion_m[[cfg.poblacion_col_total, "geometry"]],
+        how="left",
+        max_distance=max_dist,
+        distance_col="_dist_poblacion_m",
+    )
+    # sjoin_nearest puede duplicar filas si hay empates a la misma distancia;
+    # nos quedamos con el primer match por fila original.
+    cruce = cruce[~cruce.index.duplicated(keep="first")]
+
+    resultado = sigmed.copy()
+    resultado[cfg.poblacion_col_total] = cruce[cfg.poblacion_col_total].values
+
+    n_con_poblacion = resultado[cfg.poblacion_col_total].notna().sum()
+    tasa = round(n_con_poblacion / antes * 100, 2) if antes else 0.0
+    log.info(
+        "Cruce espacial de población (radio %sm): %d/%d centros poblados con población asignada (%.2f%%)",
+        max_dist,
+        n_con_poblacion,
+        antes,
+        tasa,
+    )
+    if tasa < 80:
+        log.warning(
+            "Tasa de cruce de población baja (%.2f%%) — considera aumentar "
+            "poblacion_max_distancia_metros en config.md si muchos SIGMED no tienen "
+            "un centro poblado GeoPerú cercano, y documentar esto como limitación en Fase 5.",
+            tasa,
+        )
+    return resultado
+
+
 def validar_renipress(gdf: gpd.GeoDataFrame, cfg: Config) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
     resumenes = []
     df = gdf
@@ -121,14 +195,6 @@ def validar_renipress(gdf: gpd.GeoDataFrame, cfg: Config) -> tuple[gpd.GeoDataFr
                        "NOMBRE", cfg.renipress_col_distrito]
     )
     resumenes.append(r)
-
-    # NOTA: check_outside_declared_district requiere polígonos distritales (no
-    # descargados aún en esta fase). Se deja pendiente — ver TODO en config.md
-    # (fuente_limites_administrativos) y en el README.
-    log.warning(
-        "check_outside_declared_district PENDIENTE: falta la fuente de polígonos "
-        "administrativos (declarar en config.md -> fuente_limites_administrativos)."
-    )
 
     reporte = build_quality_report(resumenes, n_total=len(df))
     return df, reporte
@@ -179,6 +245,28 @@ def run() -> None:
     sigmed = load_sigmed(cfg)
     sigmed, reporte_sigmed = validar_sigmed(sigmed, cfg)
 
+    log.info("=== Cruzando población ===")
+    poblacion = load_poblacion(cfg)
+    sigmed = cruzar_poblacion(sigmed, poblacion, cfg)
+
+    log.info("=== Cargando polígonos administrativos ===")
+    distrito = cargar_poligonos("distrito", cfg)
+    provincia = cargar_poligonos("provincia", cfg)
+    departamento = cargar_poligonos("departamento", cfg)
+
+    guardar_poligonos_geopackage(
+        {"distrito": distrito, "provincia": provincia, "departamento": departamento},
+        cfg,
+    )
+
+    log.info("=== Validando puntos vs. distrito declarado ===")
+    renipress = validar_punto_en_distrito(
+        renipress, distrito, campo_ubigeo_punto=cfg.renipress_col_ubigeo, cfg=cfg
+    )
+    sigmed = validar_punto_en_distrito(
+        sigmed, distrito, campo_ubigeo_punto=cfg.sigmed_col_ubigeo, cfg=cfg
+    )
+
     # Exportar
     renipress_out = Path(cfg.processed_dir) / "renipress_clean.parquet"
     sigmed_out = Path(cfg.processed_dir) / "sigmed_clean.parquet"
@@ -204,11 +292,20 @@ def run() -> None:
     print("=" * 70)
     print(reporte_sigmed.to_string(index=False))
 
+    print("\n" + "=" * 70)
+    print("VERIFICACIÓN — desglose de resolutivos por departamento")
+    print("=" * 70)
     print(
-        "\nPENDIENTE antes de Fase 2:\n"
-        "  1. Población por centro poblado (SIGMED no la trae) — ver config.md.\n"
-        "  2. Polígonos distritales para check_outside_declared_district — ver config.md.\n"
+        renipress.groupby(cfg.renipress_col_departamento)["es_resolutivo"]
+        .agg(["sum", "count"])
+        .rename(columns={"sum": "resolutivos", "count": "total"})
     )
+
+    print("\nValores únicos de CATEGORIA (revisa que no haya espacios/variantes raras):")
+    print(renipress[cfg.renipress_col_categoria].value_counts(dropna=False))
+
+    print("\nValores únicos de ESTADO (revisa que 'ACTIVO' calce exacto):")
+    print(renipress[cfg.renipress_col_estado].value_counts(dropna=False))
 
 
 if __name__ == "__main__":

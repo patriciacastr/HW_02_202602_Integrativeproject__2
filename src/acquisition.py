@@ -22,13 +22,14 @@ import requests
 
 from src.config_loader import load_config
 
+Path("logs").mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-7s | %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(
-            Path("logs") / "acquisition.log", encoding="utf-8"),
+        logging.FileHandler(Path("logs") / "acquisition.log", encoding="utf-8"),
     ],
 )
 log = logging.getLogger("acquisition")
@@ -45,8 +46,7 @@ class DownloadResult:
 
 def _download(name: str, url: str, dest: Path, timeout: int = 60) -> DownloadResult:
     if dest.exists() and dest.stat().st_size > 0:
-        log.info("SKIP  %-12s ya existe en %s (%.1f KB)",
-                 name, dest, dest.stat().st_size / 1024)
+        log.info("SKIP  %-12s ya existe en %s (%.1f KB)", name, dest, dest.stat().st_size / 1024)
         return DownloadResult(name, url, dest, "ya_existia")
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -59,12 +59,75 @@ def _download(name: str, url: str, dest: Path, timeout: int = 60) -> DownloadRes
                 for chunk in resp.iter_content(chunk_size=1 << 20):
                     f.write(chunk)
             tmp.rename(dest)
-        log.info("OK    %-12s -> %s (%.1f KB)", name,
-                 dest, dest.stat().st_size / 1024)
+        log.info("OK    %-12s -> %s (%.1f KB)", name, dest, dest.stat().st_size / 1024)
         return DownloadResult(name, url, dest, "descargado")
     except Exception as exc:  # noqa: BLE001 — se quiere capturar cualquier fallo de red
         log.error("FAIL  %-12s %s (%s)", name, url, exc)
         return DownloadResult(name, url, dest, "error", detail=str(exc))
+
+
+def _download_poblacion_sigrid(cfg, dest: Path, timeout: int = 120) -> DownloadResult:
+    """Descarga población por centro poblado desde SIGRID (CENEPRED), filtrada a los
+    departamentos de config.md. La capa limita a 1000 registros por página
+    (MaxRecordCount), así que se pagina con resultOffset hasta agotar resultados."""
+    url = cfg.url_poblacion_centros_poblados
+
+    if dest.exists() and dest.stat().st_size > 0:
+        log.info("SKIP  %-12s ya existe en %s", "poblacion", dest)
+        return DownloadResult("poblacion", url, dest, "ya_existia")
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    departamentos_sql = ", ".join(f"'{d}'" for d in cfg.departamentos)
+    where = f"{cfg.poblacion_col_departamento} IN ({departamentos_sql})"
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; proyecto-golden-hour/1.0)"}
+
+    features: list[dict] = []
+    offset = 0
+    page_size = 1000
+    try:
+        while True:
+            params = {
+                "where": where,
+                "outFields": "*",
+                "f": "geojson",
+                "resultRecordCount": page_size,
+                "resultOffset": offset,
+            }
+            log.info("GET   %-12s offset=%d", "poblacion", offset)
+            resp = requests.get(url, params=params, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            try:
+                data = resp.json()
+            except ValueError:
+                log.error(
+                    "FAIL  %-12s el servidor no devolvió JSON válido. status=%d, "
+                    "primeros 500 caracteres de la respuesta:\n%s",
+                    "poblacion",
+                    resp.status_code,
+                    resp.text[:500],
+                )
+                return DownloadResult(
+                    "poblacion", url, dest, "error", detail="respuesta no era JSON válido"
+                )
+            if "error" in data:
+                log.error("FAIL  %-12s el servicio devolvió un error: %s", "poblacion", data["error"])
+                return DownloadResult("poblacion", url, dest, "error", detail=str(data["error"]))
+            page_features = data.get("features", [])
+            features.extend(page_features)
+            if len(page_features) < page_size:
+                break
+            offset += page_size
+
+        import json
+
+        geojson_out = {"type": "FeatureCollection", "features": features}
+        with open(dest, "w", encoding="utf-8") as f:
+            json.dump(geojson_out, f, ensure_ascii=False)
+        log.info("OK    %-12s -> %s (%d centros poblados)", "poblacion", dest, len(features))
+        return DownloadResult("poblacion", url, dest, "descargado")
+    except Exception as exc:  # noqa: BLE001
+        log.error("FAIL  %-12s %s (%s)", "poblacion", url, exc)
+        return DownloadResult("poblacion", url, dest, "error", detail=str(exc))
 
 
 def run(cfg=None) -> list[DownloadResult]:
@@ -83,8 +146,8 @@ def run(cfg=None) -> list[DownloadResult]:
         "osm_peru": (cfg.url_osm_peru, raw_dir / "peru-latest.osm.pbf"),
     }
 
-    resultados = [_download(name, url, dest)
-                  for name, (url, dest) in fuentes.items()]
+    resultados = [_download(name, url, dest) for name, (url, dest) in fuentes.items()]
+    resultados.append(_download_poblacion_sigrid(cfg, Path(cfg.path_poblacion_raw)))
 
     for manual in ("renipress", "sigmed"):
         log.warning(
@@ -93,6 +156,7 @@ def run(cfg=None) -> list[DownloadResult]:
             "de descarga aquí.",
             manual,
             raw_dir,
+            manual,
         )
 
     fecha = datetime.now(timezone.utc).isoformat(timespec="seconds")

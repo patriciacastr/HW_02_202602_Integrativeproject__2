@@ -3,6 +3,8 @@ data/raw/*.pbf
 data/raw/*.osm
 data/raw/renipress.csv
 data/raw/sigmed/
+data/raw/poblacion_centros_poblados_geoperu/
+data/raw/limites_geogpsperu/
 data/raw/*.shp
 data/raw/*.shx
 data/raw/*.dbf
@@ -10,7 +12,9 @@ data/raw/*.prj
 data/raw/*.cpg
 data/raw/*.sbn
 data/raw/*.sbx
-data/raw/_download_manifest.md
+
+# El manifiesto de descargas SÍ se versiona (documentación de fechas/fuentes)
+# data/raw/_download_manifest.md -- NO EXCLUIR
 
 # === Datos procesados/salidas pesadas ===
 data/processed/*.parquet
