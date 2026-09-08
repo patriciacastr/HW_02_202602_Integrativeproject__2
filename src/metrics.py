@@ -15,6 +15,28 @@ import pandas as pd
 log = logging.getLogger("metrics")
 
 
+def resumen_kpis(demanda_con_acceso: pd.DataFrame, col_poblacion: str, umbral_min: float) -> pd.DataFrame:
+    """
+    KPIs agregados para un subconjunto de demanda (ej. tras aplicar filtros
+    en el dashboard de Fase 4): población total, población más allá del
+    umbral, tiempo de acceso promedio ponderado y mediana. Existe para que
+    el dashboard nunca tenga que escribir sus propias fórmulas de agregación.
+    """
+    df = demanda_con_acceso.dropna(subset=[col_poblacion, "t_min"])
+    poblacion_total = df[col_poblacion].sum()
+    poblacion_sobre_umbral = df.loc[df["t_min"] > umbral_min, col_poblacion].sum()
+    t_min_promedio = (
+        np.average(df["t_min"], weights=df[col_poblacion]) if poblacion_total > 0 else df["t_min"].mean()
+    )
+    return pd.DataFrame([{
+        "poblacion_total": poblacion_total,
+        "poblacion_sobre_umbral": poblacion_sobre_umbral,
+        "pct_sobre_umbral": 100 * poblacion_sobre_umbral / poblacion_total if poblacion_total > 0 else 0.0,
+        "t_min_promedio_ponderado": t_min_promedio,
+        "t_min_mediana": df["t_min"].median(),
+    }])
+
+
 def calcular_tiempo_acceso(
     matriz_car: pd.DataFrame,
     ids_resolutivos: set,
