@@ -132,11 +132,13 @@ no del `.pbf` de Perú completo — decisión tomada por restricción de RAM
 
 ## Métricas (Fase 3)
 
+- `bandas_cobertura_min`: [30, 60, 120]
+- `medida_desigualdad`: "gini"  # alternativa: "lorenz"
+- `dimension_cruce`: "altitud"  # cambiado de "pobreza": SIGMED ya trae altitud (campo Z), sin descarga extra necesaria
 - `sigmed_col_altitud`: Z
 - `sigmed_col_capital`: CAPITAL
 - `umbral_poblacion_urbano`: 2000  # centro poblado con más habitantes que esto se clasifica como urbano, aunque CAPITAL=0
 - `top_n_brecha_critica`: 15
-- `dimension_cruce`: "altitud"  # cambiado de "pobreza": SIGMED ya trae altitud (campo Z), sin descarga extra necesaria
 
 ## Dashboard (Fase 4)
 

@@ -89,6 +89,8 @@ def promedio_ponderado_por_nivel(
 
     Devuelve: [col_nivel, t_min_promedio_ponderado, poblacion_total, n_puntos]
     """
+    df_valido = demanda_con_acceso.dropna(subset=[col_poblacion, "t_min"])
+
     def promedio_ponderado(grupo: pd.DataFrame) -> float:
         peso = grupo[col_poblacion]
         if peso.sum() == 0:
@@ -96,7 +98,7 @@ def promedio_ponderado_por_nivel(
         return np.average(grupo["t_min"], weights=peso)
 
     resultado = (
-        demanda_con_acceso.groupby(col_nivel)
+        df_valido.groupby(col_nivel)
         .apply(lambda g: pd.Series({
             "t_min_promedio_ponderado": promedio_ponderado(g),
             "poblacion_total": g[col_poblacion].sum(),
@@ -134,7 +136,7 @@ def gini_ponderado(demanda_con_acceso: pd.DataFrame, col_valor: str, col_poblaci
     p = np.concatenate([[0], peso_acum / peso_acum[-1]])
     l = np.concatenate([[0], valor_ponderado_acum / valor_ponderado_acum[-1]])
 
-    area_bajo_lorenz = np.trapz(l, p)
+    area_bajo_lorenz = np.trapezoid(l, p)
     gini = 1 - 2 * area_bajo_lorenz
 
     log.info("Gini ponderado del tiempo de acceso: %.4f", gini)
@@ -155,7 +157,8 @@ def clasificar_urbano_rural(
     Agrega la columna 'es_urbano' (bool) al DataFrame.
     """
     df = demanda.copy()
-    es_capital = df[col_capital].fillna(0) >= 1
+    capital_numerico = pd.to_numeric(df[col_capital], errors="coerce").fillna(0)
+    es_capital = capital_numerico >= 1
     supera_umbral = df[col_poblacion].fillna(0) >= umbral_poblacion
     df["es_urbano"] = es_capital | supera_umbral
 
@@ -170,11 +173,13 @@ def clasificar_urbano_rural(
 
 def contraste_urbano_rural(demanda_clasificada: pd.DataFrame, col_poblacion: str) -> pd.DataFrame:
     """Tiempo de acceso promedio ponderado, urbano vs. rural, lado a lado."""
+    df_valido = demanda_clasificada.dropna(subset=[col_poblacion, "t_min"])
+
     def promedio_ponderado(grupo: pd.DataFrame) -> float:
         return np.average(grupo["t_min"], weights=grupo[col_poblacion])
 
     resultado = (
-        demanda_clasificada.groupby("es_urbano")
+        df_valido.groupby("es_urbano")
         .apply(lambda g: pd.Series({
             "t_min_promedio_ponderado": promedio_ponderado(g),
             "poblacion_total": g[col_poblacion].sum(),
@@ -193,7 +198,9 @@ def cruce_con_altitud(demanda_con_acceso: pd.DataFrame, col_altitud: str, col_po
     correlación (ponderado por población) y un resumen por banda altitudinal
     -- NO afirma causalidad; esa interpretación va en el texto del reporte.
     """
-    df = demanda_con_acceso.dropna(subset=[col_altitud, "t_min"]).copy()
+    df = demanda_con_acceso.copy()
+    df[col_altitud] = pd.to_numeric(df[col_altitud], errors="coerce")
+    df = df.dropna(subset=[col_altitud, "t_min", col_poblacion])
 
     # Correlación de Pearson ponderada por población
     peso = df[col_poblacion].to_numpy(dtype=float)
