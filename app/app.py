@@ -30,6 +30,19 @@ from src.metrics import brecha_critica, promedio_ponderado_por_nivel, resumen_kp
 
 st.set_page_config(page_title="Golden Hour Dashboard", layout="wide", page_icon="🏥")
 
+st.markdown(
+    "<style>[data-testid='stDataFrame'] { width: 100% !important; }</style>",
+    unsafe_allow_html=True,
+)
+
+
+def centro_de(gdf) -> dict:
+    """Centro (lat/lon) para que un mapa de Plotly abra sobre los datos reales
+    y no en (0,0) -- al pasar 'zoom' explícito, Plotly deja de autoajustar la
+    vista, así que hay que darle 'center' siempre a mano."""
+    return {"lat": gdf.geometry.y.mean(), "lon": gdf.geometry.x.mean()}
+
+
 cfg = load_config()
 
 ID_DEMANDA = cfg.sigmed_col_codigo_cp
@@ -66,6 +79,16 @@ def cargar_datos():
     demanda_acceso = demanda.merge(acceso, on=ID_DEMANDA, how="inner")
 
     return demanda_acceso, facilidades, distritos, calidad_renipress, calidad_sigmed
+
+
+@st.cache_data
+def cargar_comparacion_modos():
+    """Innovación: resultados de Fase 2 (auto vs. a pie vs. bici) para
+    visualizar espacialmente dónde el hospital más cercano cambia según
+    el modo de transporte."""
+    comp = pd.read_csv(Path(cfg.outputs_dir) / "comparacion_modos.csv")
+    comp[ID_DEMANDA] = comp[ID_DEMANDA].astype(str)
+    return comp
 
 
 @st.cache_data
@@ -151,9 +174,16 @@ col4.metric("Tiempo mediana", f"{kpis['t_min_mediana']:.1f} min")
 # Mapa coroplético -- tiempo de acceso promedio ponderado por distrito
 # ---------------------------------------------------------------------------
 
-st.subheader("Tiempo de acceso por distrito")
+st.subheader("Tiempo de acceso al hospital resolutivo más cercano, por distrito")
 
-prom_distrito = promedio_ponderado_por_nivel(demanda_f, COL_UBIGEO_DEMANDA, COL_POBLACION)
+MODOS = {"Auto": "duracion_min_car", "A pie": "duracion_min_foot", "Bicicleta": "duracion_min_bike"}
+modo_elegido = st.radio("Modo de transporte", list(MODOS.keys()), horizontal=True)
+col_modo = MODOS[modo_elegido]
+
+comparacion_mapa = cargar_comparacion_modos()
+demanda_modos = demanda_f.merge(comparacion_mapa[[ID_DEMANDA, col_modo]], on=ID_DEMANDA, how="left")
+
+prom_distrito = promedio_ponderado_por_nivel(demanda_modos, COL_UBIGEO_DEMANDA, COL_POBLACION, col_valor=col_modo)
 prom_distrito = prom_distrito.rename(columns={COL_UBIGEO_DEMANDA: COL_UBIGEO_POLIGONO})
 
 distritos_mapa = distritos.merge(prom_distrito, on=COL_UBIGEO_POLIGONO, how="inner")
@@ -173,7 +203,11 @@ else:
         center={"lat": distritos_mapa.geometry.centroid.y.mean(), "lon": distritos_mapa.geometry.centroid.x.mean()},
         zoom=5.5,
         opacity=0.75,
-        labels={"t_min_promedio_ponderado": "Min. promedio"},
+        labels={
+            "t_min_promedio_ponderado": f"Min. promedio ({modo_elegido.lower()})",
+            "poblacion_total": "Población total",
+            "n_puntos": "Centros poblados",
+        },
     )
     fig_mapa.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0}, height=500)
     st.plotly_chart(fig_mapa, use_container_width=True)
@@ -183,26 +217,136 @@ else:
 # Capa de establecimientos
 # ---------------------------------------------------------------------------
 
-st.subheader("Establecimientos de salud")
+st.subheader("Establecimientos de salud: ¿cuáles pueden resolver una emergencia?")
+st.caption(
+    "Resolutivo = categoría II-1 en adelante, con capacidad quirúrgica/de cesárea. "
+    "No resolutivo = categoría I-1 a I-4 (postas/centros de salud que solo estabilizan al paciente)."
+)
 
 if facilidades_f.empty:
     st.info("Ningún establecimiento para los filtros actuales.")
 else:
+    facilidades_f["tipo_establecimiento"] = facilidades_f["es_resolutivo"].map({
+        True: "Resolutivo (≥ II-1)", False: "No resolutivo (I-1 a I-4)",
+    })
     fig_facilidades = px.scatter_map(
         facilidades_f,
         lat=facilidades_f.geometry.y,
         lon=facilidades_f.geometry.x,
-        color="es_resolutivo",
+        color="tipo_establecimiento",
         hover_name=cfg.renipress_col_institucion,
         hover_data={cfg.renipress_col_categoria: True, cfg.renipress_col_estado: True},
-        color_discrete_map={True: "#2ca02c", False: "#7f7f7f"},
-        labels={"es_resolutivo": "Resolutivo"},
+        color_discrete_map={"Resolutivo (≥ II-1)": "#e41a1c", "No resolutivo (I-1 a I-4)": "#377eb8"},
+        labels={
+            "tipo_establecimiento": "Tipo de establecimiento",
+            cfg.renipress_col_categoria: "Categoría",
+            cfg.renipress_col_estado: "Estado",
+        },
         map_style="open-street-map",
+        center=centro_de(facilidades_f),
         zoom=5.5,
         height=450,
     )
     fig_facilidades.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0})
     st.plotly_chart(fig_facilidades, use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
+# 💡 INNOVACIÓN 1 — Dónde el hospital más cercano cambia según el modo
+# ---------------------------------------------------------------------------
+
+st.subheader("🚗🚶 Comparación de accesibilidad: auto vs. a pie")
+st.caption(
+    "Cada punto es un centro poblado. En **rojo**: el hospital con capacidad resolutiva más "
+    "cercano es DIFERENTE según si la persona va en auto o camina (la carretera rodea algo que "
+    "a pie se cruza directo, o viceversa). En **azul**: da igual el modo de transporte, el "
+    "hospital más cercano es el mismo. Esto ocurre en 40.4% de los puntos analizados (Fase 2)."
+)
+
+comparacion = cargar_comparacion_modos()
+comp_f = demanda_f[[ID_DEMANDA, "geometry"]].merge(comparacion, on=ID_DEMANDA, how="inner")
+comp_f["divergencia"] = comp_f["mismo_hospital_car_foot"].map({
+    True: "Mismo hospital en auto y a pie", False: "Hospital distinto según el modo",
+})
+
+if comp_f.empty:
+    st.info("Sin datos de comparación de modos para los filtros actuales.")
+else:
+    fig_divergencia = px.scatter_map(
+        comp_f,
+        lat=comp_f.geometry.y,
+        lon=comp_f.geometry.x,
+        color="divergencia",
+        hover_data={"ratio_foot_car": ":.1f", "duracion_min_car": ":.1f", "duracion_min_foot": ":.1f"},
+        color_discrete_map={
+            "Mismo hospital en auto y a pie": "#377eb8",
+            "Hospital distinto según el modo": "#e41a1c",
+        },
+        labels={
+            "divergencia": "¿Cambia el hospital?",
+            "ratio_foot_car": "Veces más lento a pie que en auto",
+            "duracion_min_car": "Min. en auto",
+            "duracion_min_foot": "Min. a pie",
+        },
+        map_style="open-street-map",
+        center=centro_de(comp_f),
+        zoom=5.5,
+        height=450,
+    )
+    fig_divergencia.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0})
+    st.plotly_chart(fig_divergencia, use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
+# 💡 INNOVACIÓN 3 — Área de influencia (tipo isócrona) desde un hospital
+# ---------------------------------------------------------------------------
+
+st.subheader("📍 Área de influencia de un hospital (tiempo de viaje)")
+st.caption(
+    "Elige un hospital con capacidad resolutiva. El mapa colorea cada centro poblado según "
+    "cuánto tarda EN AUTO en llegar hasta ESE hospital específico (no necesariamente el más "
+    "cercano de cada punto) — una aproximación al área de influencia real del hospital."
+)
+
+resolutivos_disp = facilidades[
+    facilidades["es_resolutivo"] & facilidades[cfg.renipress_col_departamento].isin(deptos_sel)
+].copy()
+resolutivos_disp["etiqueta"] = (
+    resolutivos_disp[cfg.renipress_col_institucion].astype(str) + " — "
+    + resolutivos_disp[cfg.renipress_col_distrito].astype(str) + ", "
+    + resolutivos_disp[cfg.renipress_col_provincia].astype(str) + ", "
+    + resolutivos_disp[cfg.renipress_col_departamento].astype(str)
+)
+
+if resolutivos_disp.empty:
+    st.info("No hay establecimientos resolutivos en los departamentos seleccionados.")
+else:
+    hospital_elegido = st.selectbox("Elige un hospital resolutivo", resolutivos_disp["etiqueta"], key="isocrona_select")
+    fid_hospital = resolutivos_disp.loc[resolutivos_disp["etiqueta"] == hospital_elegido, ID_FACILIDAD].iloc[0]
+
+    matriz_completa_iso = cargar_matriz_completa()
+    tiempos_a_hospital = matriz_completa_iso[
+        (matriz_completa_iso[ID_FACILIDAD] == fid_hospital) & matriz_completa_iso["routable"]
+    ][[ID_DEMANDA, "duracion_min"]]
+
+    iso = demanda_f[[ID_DEMANDA, "geometry"]].merge(tiempos_a_hospital, on=ID_DEMANDA, how="inner")
+    iso["banda"] = pd.cut(
+        iso["duracion_min"], bins=[-np.inf, 30, 60, 120, np.inf],
+        labels=["≤30 min", "30-60 min", "60-120 min", "> 120 min"],
+    )
+
+    if iso.empty:
+        st.info("Ningún punto de demanda alcanzable desde este hospital dentro de los filtros actuales.")
+    else:
+        fig_iso = px.scatter_map(
+            iso, lat=iso.geometry.y, lon=iso.geometry.x, color="banda",
+            category_orders={"banda": ["≤30 min", "30-60 min", "60-120 min", "> 120 min"]},
+            color_discrete_sequence=["#1a9850", "#fee08b", "#fc8d59", "#d73027"],
+            labels={"banda": "Tiempo en auto hasta este hospital"},
+            map_style="open-street-map", center=centro_de(iso), zoom=5.5, height=450,
+        )
+        fig_iso.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0})
+        st.plotly_chart(fig_iso, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
@@ -212,8 +356,10 @@ else:
 st.subheader("Distribución del tiempo de acceso")
 fig_hist = px.histogram(
     demanda_f, x="t_min", nbins=40, color=DEPTO_COL,
-    labels={"t_min": "Tiempo de acceso (min)"}, barmode="overlay", opacity=0.7,
+    labels={"t_min": "Tiempo de acceso (min)", DEPTO_COL: "Departamento"},
+    barmode="overlay", opacity=0.7,
 )
+fig_hist.update_yaxes(title_text="Número de centros poblados")
 st.plotly_chart(fig_hist, use_container_width=True)
 
 
@@ -225,10 +371,14 @@ st.subheader("Distritos con peor acceso (dentro de los filtros actuales)")
 top_n = st.slider("Cantidad de distritos a mostrar", 5, 30, cfg.get("top_n_brecha_critica", 15))
 brecha = brecha_critica(prom_distrito.rename(columns={COL_UBIGEO_POLIGONO: COL_UBIGEO_DEMANDA}), COL_UBIGEO_DEMANDA, top_n)
 brecha = brecha.merge(
-    distritos[[COL_UBIGEO_POLIGONO, "DISTRITO", "PROVINCIA"]],
+    distritos[[COL_UBIGEO_POLIGONO, "DISTRITO", "PROVINCIA", "DEPARTAMEN"]],
     left_on=COL_UBIGEO_DEMANDA, right_on=COL_UBIGEO_POLIGONO, how="left",
 )
-tabla_mostrar = brecha[["ranking", "DISTRITO", "PROVINCIA", "t_min_promedio_ponderado", "poblacion_total", "n_puntos"]]
+tabla_mostrar = brecha[["ranking", "DISTRITO", "PROVINCIA", "DEPARTAMEN", "t_min_promedio_ponderado", "poblacion_total", "n_puntos"]]
+tabla_mostrar = tabla_mostrar.rename(columns={
+    "DISTRITO": "Distrito", "PROVINCIA": "Provincia", "DEPARTAMEN": "Departamento",
+    "t_min_promedio_ponderado": "Tiempo promedio (min)", "poblacion_total": "Población", "n_puntos": "Centros poblados",
+})
 st.dataframe(tabla_mostrar, use_container_width=True, hide_index=True)
 st.download_button(
     "Descargar tabla como CSV", tabla_mostrar.to_csv(index=False).encode("utf-8"),
@@ -247,7 +397,9 @@ no_resolutivos = facilidades[
 ].copy()
 no_resolutivos["etiqueta"] = (
     no_resolutivos[cfg.renipress_col_institucion].astype(str) + " — "
-    + no_resolutivos[cfg.renipress_col_distrito].astype(str)
+    + no_resolutivos[cfg.renipress_col_distrito].astype(str) + ", "
+    + no_resolutivos[cfg.renipress_col_provincia].astype(str) + ", "
+    + no_resolutivos[cfg.renipress_col_departamento].astype(str)
     + " (" + no_resolutivos[cfg.renipress_col_categoria].astype(str) + ")"
 )
 
@@ -277,6 +429,31 @@ else:
         c1.metric(f"Población sobre {umbral_min} min -- ANTES", f"{antes['poblacion_sobre_umbral']:,.0f}")
         c2.metric(f"Población sobre {umbral_min} min -- DESPUÉS", f"{despues['poblacion_sobre_umbral']:,.0f}")
         c3.metric("Población que GANA acceso", f"{ganancia_poblacion:,.0f}")
+
+        # 💡 INNOVACIÓN 2: no solo el número, sino DÓNDE está esa ganancia
+        def clasificar_cambio(row):
+            antes_ok = row["t_min"] <= umbral_min
+            despues_ok = row["t_min_nuevo"] <= umbral_min
+            if antes_ok:
+                return "Ya cubierto antes"
+            elif despues_ok:
+                return "Gana acceso"
+            return "Sigue sin cobertura"
+
+        simulado["cambio"] = simulado.apply(clasificar_cambio, axis=1)
+        st.caption("Mapa del efecto espacial del cambio simulado:")
+        fig_sim = px.scatter_map(
+            simulado, lat=simulado.geometry.y, lon=simulado.geometry.x, color="cambio",
+            color_discrete_map={
+                "Ya cubierto antes": "#377eb8",
+                "Gana acceso": "#1a9850",
+                "Sigue sin cobertura": "#d73027",
+            },
+            labels={"cambio": "Efecto del cambio"},
+            map_style="open-street-map", center=centro_de(simulado), zoom=5.5, height=450,
+        )
+        fig_sim.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0})
+        st.plotly_chart(fig_sim, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------

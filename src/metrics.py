@@ -104,20 +104,24 @@ def promedio_ponderado_por_nivel(
     demanda_con_acceso: pd.DataFrame,
     col_nivel: str,
     col_poblacion: str,
+    col_valor: str = "t_min",
 ) -> pd.DataFrame:
     """
-    Tiempo de acceso promedio, PONDERADO POR POBLACIÓN, agregado al nivel
-    administrativo indicado (distrito, provincia, o departamento).
+    Promedio (de col_valor, por defecto t_min) PONDERADO POR POBLACIÓN,
+    agregado al nivel administrativo indicado (distrito, provincia, o
+    departamento). col_valor es configurable para poder reusar esta misma
+    función con duracion_min_car/foot/bike en el dashboard, sin duplicar la
+    fórmula.
 
     Devuelve: [col_nivel, t_min_promedio_ponderado, poblacion_total, n_puntos]
     """
-    df_valido = demanda_con_acceso.dropna(subset=[col_poblacion, "t_min"])
+    df_valido = demanda_con_acceso.dropna(subset=[col_poblacion, col_valor])
 
     def promedio_ponderado(grupo: pd.DataFrame) -> float:
         peso = grupo[col_poblacion]
         if peso.sum() == 0:
-            return grupo["t_min"].mean()
-        return np.average(grupo["t_min"], weights=peso)
+            return grupo[col_valor].mean()
+        return np.average(grupo[col_valor], weights=peso)
 
     resultado = (
         df_valido.groupby(col_nivel)

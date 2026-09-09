@@ -12,3 +12,4 @@ streamlit-folium>=0.20
 matplotlib>=3.8
 numpy>=1.26
 scipy>=1.11
+pyogrio>=0.7
