@@ -222,7 +222,6 @@ cruzadas). El PDF final se guarda como `report/report.pdf`.
 - [x] Fase 3 completa (acceso, cobertura, Gini, urbano/rural, cruce con altitud)
 - [x] Fase 4 completa (dashboard Streamlit: KPIs, mapas, simulador, calidad de datos)
 - [x] Fase 5 completa (figuras/tablas generadas por pipeline, reporte LaTeX compilado)
-- [ ] Video de presentación (pendiente)
 
 ## Notas de reproducibilidad
 
