@@ -88,6 +88,21 @@ def bandas_cobertura(
     cortes = [-np.inf] + limites + [np.inf]
     df["banda"] = pd.cut(df["t_min"], bins=cortes, labels=etiquetas, right=True)
 
+    if poblacion_total == 0:
+        # La fuente de población no tiene datos utilizables para este
+        # subconjunto (ej. San Martín: 100% de sus centros poblados figuran
+        # con población = 0 en la fuente cruda -- limitación real de la
+        # fuente, no un error del pipeline). Se usa conteo simple de puntos
+        # en vez de población ponderada, para no dividir entre cero.
+        log.warning(
+            "Población total = 0 para este subconjunto -- usando conteo simple de "
+            "centros poblados en vez de población ponderada (ver limitaciones)."
+        )
+        resumen = df.groupby("banda", observed=True).size().reset_index(name="poblacion_en_banda")
+        total_puntos = len(df)
+        resumen["pct_poblacion"] = 100 * resumen["poblacion_en_banda"] / total_puntos if total_puntos else 0.0
+        return resumen
+
     resumen = (
         df.groupby("banda", observed=True)[col_poblacion]
         .sum()
@@ -202,7 +217,17 @@ def contraste_urbano_rural(demanda_clasificada: pd.DataFrame, col_poblacion: str
     df_valido = demanda_clasificada.dropna(subset=[col_poblacion, "t_min"])
 
     def promedio_ponderado(grupo: pd.DataFrame) -> float:
-        return np.average(grupo["t_min"], weights=grupo[col_poblacion])
+        peso = grupo[col_poblacion]
+        if peso.sum() == 0:
+            # Sin población utilizable en este grupo (ej. San Martín, cuya
+            # fuente de población no tiene datos usables) -- cae a promedio
+            # simple sin ponderar, para no dividir entre cero.
+            log.warning(
+                "Población total = 0 en un grupo urbano/rural -- usando promedio simple "
+                "sin ponderar (ver limitaciones)."
+            )
+            return grupo["t_min"].mean()
+        return np.average(grupo["t_min"], weights=peso)
 
     resultado = (
         df_valido.groupby("es_urbano")
@@ -228,28 +253,44 @@ def cruce_con_altitud(demanda_con_acceso: pd.DataFrame, col_altitud: str, col_po
     df[col_altitud] = pd.to_numeric(df[col_altitud], errors="coerce")
     df = df.dropna(subset=[col_altitud, "t_min", col_poblacion])
 
-    # Correlación de Pearson ponderada por población
     peso = df[col_poblacion].to_numpy(dtype=float)
     x = df[col_altitud].to_numpy(dtype=float)
     y = df["t_min"].to_numpy(dtype=float)
-    x_prom = np.average(x, weights=peso)
-    y_prom = np.average(y, weights=peso)
-    cov = np.average((x - x_prom) * (y - y_prom), weights=peso)
-    var_x = np.average((x - x_prom) ** 2, weights=peso)
-    var_y = np.average((y - y_prom) ** 2, weights=peso)
-    correlacion = cov / np.sqrt(var_x * var_y)
 
-    log.info("Correlación ponderada tiempo_acceso vs. altitud: r=%.4f", correlacion)
+    sin_poblacion = peso.sum() == 0
+    if sin_poblacion:
+        # Sin población utilizable (ej. San Martín) -- cae a correlación y
+        # promedio SIN ponderar, en vez de omitir el departamento entero.
+        log.warning(
+            "Población total = 0 -- usando correlación y promedio sin ponderar "
+            "por altitud (ver limitaciones)."
+        )
+        correlacion = np.corrcoef(x, y)[0, 1] if len(x) > 1 else float("nan")
+    else:
+        x_prom = np.average(x, weights=peso)
+        y_prom = np.average(y, weights=peso)
+        cov = np.average((x - x_prom) * (y - y_prom), weights=peso)
+        var_x = np.average((x - x_prom) ** 2, weights=peso)
+        var_y = np.average((y - y_prom) ** 2, weights=peso)
+        correlacion = cov / np.sqrt(var_x * var_y)
+
+    log.info("Correlación tiempo_acceso vs. altitud: r=%.4f", correlacion)
 
     df["banda_altitud"] = pd.cut(
         df[col_altitud],
         bins=[-np.inf, 500, 2000, 3500, np.inf],
         labels=["0-500m (costa)", "500-2000m", "2000-3500m", "> 3500m (altoandino)"],
     )
+
+    def promedio_banda(g: pd.DataFrame) -> float:
+        if sin_poblacion:
+            return g["t_min"].mean()
+        return np.average(g["t_min"], weights=g[col_poblacion])
+
     resumen_bandas = (
         df.groupby("banda_altitud", observed=True)
         .apply(lambda g: pd.Series({
-            "t_min_promedio_ponderado": np.average(g["t_min"], weights=g[col_poblacion]),
+            "t_min_promedio_ponderado": promedio_banda(g),
             "poblacion_total": g[col_poblacion].sum(),
             "n_puntos": len(g),
         }), include_groups=False)

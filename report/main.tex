@@ -1,37 +1,401 @@
 \documentclass[11pt,a4paper]{article}
-\usepackage[utf8]{utf8}
+\usepackage[utf8]{inputenc}
 \usepackage[spanish]{babel}
+\usepackage[margin=2.5cm]{geometry}
 \usepackage{graphicx}
 \usepackage{booktabs}
-\usepackage{geometry}
-\geometry{margin=2.5cm}
+\usepackage{hyperref}
+\usepackage{xurl}
+\usepackage{caption}
+\usepackage{amsmath}
+\usepackage{float}
 
-\title{\textbf{Proyecto Golden Hour: Reporte de Accesibilidad Médica}}
-\author{Lambayeque, Ayacucho y San Martín}
-\date{\today}
+\title{Golden Hour: Accesibilidad a Salud Resolutiva por Tiempo de Viaje\\
+en Lambayeque, Ayacucho y San Martín, Perú}
+\author{Patricia Castro Hilario \\ Carla Bocanegra Valentin}
+\date{Setiembre 2026}
 
 \begin{document}
 \maketitle
 
-\section{Introducción}
-Este informe presenta el análisis geoespacial de tiempos de traslados viales hacia establecimientos de salud de nivel resolutivo (II-1 a III-E) para los departamentos de Lambayeque, Ayacucho y San Martín.
+\begin{abstract}
+Este trabajo mide cuánto tarda, por carretera, la población de tres departamentos
+peruanos con geografías distintas (Lambayeque, costa; Ayacucho, andino; San Martín,
+amazónico) en llegar a un establecimiento de salud con capacidad resolutiva
+(categoría II-1 o superior). Usando datos de RENIPRESS, SIGMED y OpenStreetMap
+procesados con un motor de ruteo local (OSRM), encontramos que el 94.2\% de la
+población está a 30 minutos o menos en auto, pero el 0.7\% (aproximadamente 70,800
+personas) supera las 2 horas. El acceso está muy desigualmente distribuido
+(Gini ponderado por población = 0.6867, superior al Gini de ingresos del país) y
+es sistemáticamente peor en zonas rurales (62.2 min promedio) que urbanas
+(6.4 min). El distrito con peor acceso es Oronccoy (Ayacucho, 272.9 min promedio).
+La relación entre altitud y tiempo de acceso es no lineal y débilmente
+correlacionada de forma global (r=0.19), pero muestra un salto marcado por
+encima de los 3500 m.s.n.m. Discutimos las limitaciones de los datos y del
+método, incluyendo tasas de error de coordenadas, el recorte geográfico de la
+red vial usado por restricción de cómputo, y los supuestos de la clasificación
+urbano/rural.
+\end{abstract}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{Introducción y planteamiento del problema}
+
+En emergencias de trauma o parto complicado, la ``hora dorada'' es la ventana de
+tiempo en la que un paciente debe llegar a un establecimiento capaz de resolver
+su emergencia -- realizar una cirugía o una cesárea -- para que el desenlace sea
+favorable. En el sistema de salud peruano, un puesto de salud de categoría I-1
+puede estabilizar a un paciente, pero no puede operarlo; solo los establecimientos
+de categoría II-1 en adelante tienen esa capacidad resolutiva.
+
+La pregunta que responde este trabajo es: \textbf{¿cuánto tarda, por carretera, la
+población de una región dada en llegar a un establecimiento de salud con
+capacidad resolutiva, y dónde son peores esas brechas?}
+
+Se analizan tres departamentos elegidos deliberadamente por su contraste
+geográfico: Lambayeque (costa), Ayacucho (sierra) y San Martín (selva). La
+hipótesis de trabajo es que la geografía condiciona fuertemente el acceso, y que
+una carretera pavimentada en la costa no es comparable a una trocha en la
+sierra o la selva, incluso si la distancia en línea recta es similar.
+
+\section{Fuentes de datos}
+
+\begin{itemize}
+  \item \textbf{RENIPRESS} (SUSALUD) -- registro nacional de establecimientos de
+  salud, con categoría, estado operativo y coordenadas. Descarga: 6 de setiembre
+  de 2026. \url{https://www.datosabiertos.gob.pe/dataset/registro-nacional-de-entidades-prestadoras-de-servicios-de-salud-renipress}
+  \item \textbf{SIGMED} (MINEDU) -- centros poblados georreferenciados, usados
+  como puntos de demanda, con código de distrito, altitud, y clasificación de
+  capital político-administrativa. Descarga: 6 de setiembre de 2026.
+  \item \textbf{GeoPerú/INEI} -- centros poblados con población, usados para
+  asignar población a cada punto de demanda de SIGMED por proximidad espacial
+  (los esquemas de codificación de ambas fuentes son incompatibles entre sí).
+  \item \textbf{OpenStreetMap} (extracto de Perú, Geofabrik) -- red vial usada
+  para el cálculo de rutas reales con OSRM.
+  \item \textbf{GEOGPSPERU / INEI} -- polígonos de distrito, provincia y
+  departamento, usados para agregación administrativa y validación geográfica.
+\end{itemize}
+
+\textbf{Limitación de licencia/acceso conocida:} SIGRID (CENEPRED), la fuente
+inicialmente prevista para población, resultó no confiable (errores de servidor
+recurrentes) y fue descartada en favor de GeoPerú/INEI con un cruce espacial.
+
+\section{Metodología}
+
+\subsection{Definición de capacidad resolutiva}
+
+Un establecimiento se considera resolutivo si y solo si su estado operativo es
+``ACTIVO'' y su categoría normalizada pertenece a
+\{II-1, II-2, II-E, III-1, III-2, III-E\}. Categorías I-1 a I-4 se mantienen en el
+dataset pero se excluyen del cómputo de vecino más cercano resolutivo.
+
+\subsection{Validación de datos (Fase 1)}
+
+Se implementaron seis reglas de validación: coordenadas faltantes o en cero,
+coordenadas fuera del bounding box de Perú, coordenadas con latitud/longitud
+invertidas, puntos fuera del distrito que su propio registro declara, códigos
+duplicados, y problemas de codificación de texto. Cada regla produce un reporte
+de cuántos registros afectó y qué se hizo con ellos (Tabla~\ref{tab:calidad_renipress}
+y Tabla~\ref{tab:calidad_sigmed}).
+
+\subsection{Ruteo (Fase 2)}
+
+Se usó \textbf{OSRM} corriendo localmente en Docker, con un grafo separado por
+perfil (auto, a pie, bicicleta). Por restricción de memoria RAM (8 GB
+disponibles), el grafo no se construyó sobre el extracto completo de Perú
+(220 MB), que causaba un error de memoria (\emph{OOM kill}) durante la fase de
+construcción de la jerarquía de contracción. En su lugar, se recortó el extracto
+a las cajas delimitadoras de los tres departamentos analizados, con un margen de
+0.3 grados (\textasciitilde{}30 km) para no perder rutas que cruzan la frontera
+departamental. Esta es una decisión de ingeniería motivada por hardware, no por
+diseño metodológico, y se documenta como limitación en la Sección~\ref{sec:limitaciones}.
+
+La matriz de tiempos se calculó completa (todos los puntos de demanda contra
+todos los establecimientos) para el perfil auto, y restringida a establecimientos
+resolutivos para los perfiles a pie y bicicleta -- decisión que reduce
+drásticamente el costo computacional sin perder ningún requisito de análisis,
+ya que el simulador de escenarios (ver Anexo: Dashboard interactivo) solo necesita la
+matriz completa en auto.
+
+Dado que la demanda real (18{,}713 centros poblados) excede el límite de cómputo
+fijado (5{,}000 puntos), se aplicó un muestreo estratificado por distrito y
+ponderado por población: con el 26.7\% de los puntos se conservó el 97.4\% de la
+población total representada.
+
+\subsection{Métricas (Fase 3)}
+
+El tiempo de acceso $t_i$ de cada punto de demanda $i$ es el tiempo en auto al
+establecimiento resolutivo más cercano, tomado de la matriz completa. Se
+calcularon bandas de cobertura poblacional, promedios ponderados por distrito/
+provincia/departamento, un ranking de brecha crítica, el coeficiente de Gini
+ponderado por población sobre $t_i$, una clasificación urbano/rural, y el cruce
+con altitud.
+
+\textbf{Clasificación urbano/rural (regla explícita):} un centro poblado se
+considera urbano si es capital de distrito, provincia o departamento, o si su
+población supera 2{,}000 habitantes; todo lo demás se considera rural.
+
+\textbf{Dimensión de cruce elegida: altitud, no pobreza.} SIGMED ya incluye
+altitud (campo \texttt{Z}) sin necesidad de una fuente adicional, mientras que
+el mapa de pobreza del INEI habría requerido una descarga y un cruce nuevos, no
+factibles dentro del plazo del proyecto.
 
 \section{Resultados}
-La Figura \ref{fig:dist} exhibe la distribución de tiempos de traslados, mientras que la Tabla \ref{tab:worst} resume los distritos con mayores limitaciones de infraestructura.
 
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.85\linewidth]{figures/fig_access_distribution.pdf}
-    \caption{Distribución distrital de accesibilidad médica.}
-    \label{fig:dist}
+\subsection{Panorama espacial}
+
+La Figura~\ref{fig:mapa} ofrece una vista general: cada distrito coloreado
+según su tiempo de acceso promedio ponderado. Los distritos en gris no
+tuvieron ningún punto de demanda en la muestra analizada.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.58\textwidth]{figures/fig_mapa_distrital.pdf}
+  \caption{Tiempo de acceso promedio ponderado por distrito, en los tres departamentos analizados.}
+  \label{fig:mapa}
 \end{figure}
 
-\begin{table}[htbp]
-    \centering
-    \caption{Distritos prioritarios según brechas de acceso}
-    \input{../data/outputs/table_worst_districts.tex}
-    \label{tab:worst}
+\subsection{Cobertura poblacional}
+
+El 94.2\% de la población evaluada está a 30 minutos o menos en auto de un
+establecimiento resolutivo, pero el 0.7\% (aproximadamente 70{,}800
+personas) está a más de dos horas. La Figura~\ref{fig:cobertura_dep}
+desagrega este indicador por departamento, mostrando diferencias marcadas
+en la forma de la distribución.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.72\textwidth]{figures/fig_cobertura_bandas_departamento.pdf}
+  \caption{Distribución de la población por banda de tiempo de acceso, desagregada por departamento. San Martín usa conteo simple de centros poblados, no ponderado por población -- ver Sección~\ref{sec:limitaciones}.}
+  \label{fig:cobertura_dep}
+\end{figure}
+
+\subsection{Desigualdad de acceso}
+
+El coeficiente de Gini ponderado por población sobre el tiempo de acceso es
+\textbf{0.6867} -- considerablemente más alto que el Gini de ingresos del Perú
+(aproximadamente 0.40--0.45), lo que sugiere que el acceso a salud resolutiva
+está más desigualmente distribuido que el ingreso mismo.
+
+\subsection{Brecha crítica por distrito}
+
+La Tabla~\ref{tab:brecha_critica} muestra los distritos con peor acceso
+promedio ponderado a nivel nacional (de los 3 departamentos). Nueve de los
+diez peores distritos pertenecen a Ayacucho (zona andina), lo que confirma
+la hipótesis de que la geografía condiciona fuertemente el acceso.
+
+\begin{table}[H]
+  \centering
+  \caption{Distritos con peor tiempo de acceso promedio ponderado.}
+  \label{tab:brecha_critica}
+  \small
+  \input{tables/tabla_brecha_critica.tex}
 \end{table}
 
-\end{document}
+Al desagregar por departamento (Figura~\ref{fig:brecha_dep}), se observa que
+cada uno tiene su propio conjunto de distritos críticos -- no solo Ayacucho
+concentra brechas severas, aunque sí las tiene más pronunciadas.
 
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.88\textwidth]{figures/fig_brecha_critica_departamento.pdf}
+  \caption{Los 5 distritos con peor acceso dentro de cada departamento.}
+  \label{fig:brecha_dep}
+\end{figure}
+
+\subsection{Contraste urbano/rural}
+
+El tiempo de acceso promedio ponderado en zonas rurales (62.2 min) es
+aproximadamente diez veces mayor que en zonas urbanas (6.4 min). Esta
+brecha no es igual de severa en los tres departamentos (Figura~\ref{fig:urbano_rural_dep}).
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.62\textwidth]{figures/fig_urbano_rural_departamento.pdf}
+  \caption{Tiempo de acceso urbano vs. rural, desagregado por departamento. San Martín usa promedio simple sin ponderar por población -- ver Sección~\ref{sec:limitaciones}.}
+  \label{fig:urbano_rural_dep}
+\end{figure}
+
+\subsection{Cruce con altitud}
+
+La correlación de Pearson ponderada entre altitud y tiempo de acceso es
+débil (r=0.19) a nivel nacional, pero la Figura~\ref{fig:altitud_dep}
+revela que esta correlación global subestima una relación real que no es
+lineal, y que el efecto de la altitud es más marcado en Ayacucho, el único
+de los tres departamentos con territorio por encima de los 3{,}500 m.s.n.m.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.75\textwidth]{figures/fig_altitud_departamento.pdf}
+  \caption{Tiempo de acceso por banda altitudinal, desagregado por departamento.}
+  \label{fig:altitud_dep}
+\end{figure}
+
+\subsection{Auto vs. a pie}
+
+En el 40.4\% de los puntos de demanda, el hospital resolutivo más cercano EN
+AUTO es distinto al más cercano CAMINANDO. La mediana del ratio de tiempo
+a pie/auto es 12.0x (media 15.3x): caminar toma, en la mediana, doce veces más
+que ir en auto -- consistente con zonas donde existe una carretera pero no un
+camino peatonal directo.
+
+\section{Discusión}
+
+\subsection{Contraste geográfico}
+
+El contraste entre departamentos confirma la hipótesis de partida: la brecha
+crítica está dominada por distritos andinos de Ayacucho, mientras que
+Lambayeque (costa) no aparece en el top 10 de peor acceso. Esto es consistente
+con la infraestructura vial: la costa peruana tiene una red de carreteras
+pavimentadas mucho más densa que la sierra.
+
+\subsection{Comparación distancia recta vs. red vial}
+
+El uso de un motor de ruteo real (OSRM) sobre la red de OpenStreetMap, en lugar
+de una distancia en línea recta, es central para la validez del análisis. La
+divergencia auto-vs-a pie (40.4\% de los puntos) sería invisible si se usara
+solo distancia euclidiana, ya que esa métrica no distingue entre modos de
+transporte ni topografía.
+
+\subsection{Correlación vs. causalidad}
+
+La relación entre altitud y tiempo de acceso es \textbf{correlacional, no
+causal}. La altitud en sí misma no causa demoras; está asociada a terreno más
+escarpado, menor densidad de red vial pavimentada, y mayor dispersión
+poblacional, que son las causas mecánicas plausibles del peor acceso. No se
+puede descartar que otras variables no medidas (por ejemplo, presupuesto vial
+regional histórico) expliquen parte de esta asociación.
+
+\section{Limitaciones}
+\label{sec:limitaciones}
+
+\begin{itemize}
+  \item \textbf{Coordenadas faltantes en RENIPRESS:} 25.78\% de los
+  establecimientos en los tres departamentos no tienen coordenadas registradas
+  y quedaron excluidos del cómputo geoespacial (Tabla~\ref{tab:calidad_renipress}).
+
+  \item \textbf{Discordancia distrital en RENIPRESS:} de los establecimientos
+  con coordenadas válidas, 40.2\% caen en un distrito distinto al que declara
+  su propio registro (vs. 0.7\% en SIGMED), lo que sugiere errores de
+  digitación en el campo de texto DISTRITO/UBIGEO de RENIPRESS, no en las
+  coordenadas mismas.
+
+  \item \textbf{Cruce espacial de población incompleto:} solo 74.96\% de los
+  centros poblados de SIGMED encontraron un centro poblado equivalente en la
+  fuente de población (GeoPerú/INEI) dentro de un radio de 1{,}000 m. El 25\%
+  restante corresponde a centros poblados más granulares sin equivalente
+  censal cercano.
+
+  \item \textbf{Vacío de cobertura censal en San Martín:} la fuente de
+  población (GeoPerú/INEI) registra 0 en el 100\% de los 2{,}510 centros
+  poblados de San Martín -- a diferencia de Lambayeque (1.8\% en cero) y
+  Ayacucho (37.5\%, deshabitados plausibles). Un 100\% de ceros no es un
+  dato real, sino un vacío de cobertura censal en la Amazonía. Todas las
+  métricas ponderadas por población para San Martín (bandas de cobertura,
+  contraste urbano/rural, cruce con altitud) recurren automáticamente a un
+  promedio o conteo simple sin ponderar como respaldo; sus cifras deben
+  interpretarse con más cautela que las de Ayacucho y Lambayeque.
+
+  \item \textbf{Recorte geográfico de la red vial:} el grafo de ruteo se
+  construyó sobre un recorte de los tres departamentos (con margen de 0.3°),
+  no sobre el extracto completo de Perú, por restricción de memoria RAM. Esto
+  implica que ninguna ruta puede cruzar hacia fuera de esa zona recortada; el
+  64.9\% de los pares en la matriz completa de auto resultaron ``no
+  ruteables'' porque corresponden a pares entre departamentos distintos, sin
+  conexión en el grafo recortado. Esto no afecta el resultado de
+  ``establecimiento más cercano'' (siempre gana un establecimiento dentro del
+  mismo departamento), pero sí implica que el análisis no puede usarse para
+  evaluar rutas interdepartamentales.
+
+  \item \textbf{Muestreo de la demanda:} por restricción de cómputo, se
+  analizó una muestra estratificada por distrito y ponderada por población
+  (5{,}004 de 18{,}713 centros poblados), que conserva el 97.4\% de la
+  población total. Los distritos muy pequeños o con pocos centros poblados en
+  la muestra tienen mayor error de muestreo en sus promedios.
+
+  \item \textbf{Supuesto de disponibilidad del establecimiento:} el análisis
+  asume que un establecimiento activo y de categoría resolutiva tiene personal,
+  equipamiento, y ambulancia disponibles en el momento de la emergencia. No se
+  verifica dotación de personal ni disponibilidad real de quirófano.
+
+  \item \textbf{Ausencia de tiempo de traslado inicial:} el tiempo de acceso
+  no incluye el tiempo de traslado desde la vivienda hasta la vía más cercana,
+  ni el tiempo de aviso/organización previo al traslado.
+
+  \item \textbf{Dimensión de cruce (altitud, no pobreza):} se optó por altitud,
+  disponible directamente en SIGMED, en lugar de un indicador de pobreza que
+  habría requerido una fuente y un cruce adicionales no realizados por
+  restricción de tiempo.
+\end{itemize}
+
+\section{Conclusiones y recomendaciones}
+
+El acceso a salud resolutiva en los tres departamentos analizados es altamente
+desigual (Gini=0.6867) y está fuertemente condicionado por la geografía: la
+zona andina de Ayacucho concentra la peor accesibilidad, con distritos donde el
+tiempo promedio ponderado supera las cuatro horas. La brecha urbano/rural
+(10x) y la relación no lineal con la altitud sugieren que las intervenciones de
+infraestructura vial y/o la ubicación de nuevos establecimientos resolutivos
+deberían priorizar zonas altoandinas por encima de los 3{,}500 m.s.n.m.,
+particularmente en los distritos listados en la Tabla~\ref{tab:brecha_critica}.
+
+Como trabajo futuro, se recomienda: (1) repetir el análisis con el grafo de
+ruteo completo de Perú una vez se disponga de más memoria RAM, para evaluar
+rutas interdepartamentales; (2) incorporar disponibilidad real de personal y
+ambulancias por establecimiento; (3) usar el simulador de escenarios del
+dashboard (ver Anexo: Dashboard interactivo) para priorizar qué establecimientos
+I-3/I-4 convertir en resolutivos, maximizando la población que gana cobertura
+por sol invertido.
+
+\section{Referencias}
+\small
+\begin{itemize}
+\setlength{\itemsep}{2pt}
+  \item SUSALUD. Registro Nacional de Entidades Prestadoras de Servicios de
+  Salud (RENIPRESS). \url{https://www.datosabiertos.gob.pe/dataset/registro-nacional-de-entidades-prestadoras-de-servicios-de-salud-renipress}
+  \item MINEDU. Sistema de Información Geográfica Educativa (SIGMED).
+  \url{https://sigmed.minedu.gob.pe/descargas/}
+  \item Geofabrik GmbH. OpenStreetMap Peru extract.
+  \url{https://download.geofabrik.de/south-america/peru-latest.osm.pbf}
+  \item GEOGPSPERU. Límites político-administrativos INEI actualizados.
+  \url{https://www.geogpsperu.com/}
+  \item Luxen, D. \& Vetter, C. (2011). Real-time routing with OpenStreetMap
+  data. OSRM -- Open Source Routing Machine. \url{http://project-osrm.org/}
+\end{itemize}
+
+\section*{Anexo: Calidad de datos (Fase 1)}
+
+{\renewcommand{\arraystretch}{0.75}
+\begin{table}[H]
+  \centering
+  \caption{Reporte de calidad de datos -- RENIPRESS.}
+  \label{tab:calidad_renipress}
+  \small
+  \input{tables/tabla_calidad_renipress.tex}
+\end{table}
+
+\begin{table}[H]
+  \centering
+  \caption{Reporte de calidad de datos -- SIGMED.}
+  \label{tab:calidad_sigmed}
+  \small
+  \input{tables/tabla_calidad_sigmed.tex}
+\end{table}
+}
+
+\section*{Anexo: Dashboard interactivo}
+\label{sec:dashboard}
+
+Se desarrolló un dashboard en Streamlit (\texttt{app/app.py}) con: indicadores
+clave filtrables, mapa coroplético por modo de transporte, capa de
+establecimientos filtrable, comparación espacial auto-vs-a pie, área de
+influencia por hospital, distribución del tiempo de acceso, ranking de
+brecha crítica descargable, un simulador de escenarios (con visualización
+espacial del efecto de convertir un establecimiento en resolutivo), y un
+panel de calidad de datos.
+
+
+
+\end{document}

@@ -1,0 +1,11 @@
+\begin{tabular}{lrrp{6cm}}
+\toprule
+Regla & N marcados & \% del total & Acción \\
+\midrule
+coordenadas faltantes o cero & 692 & 25.78 & descartar de computo geoespacial (mantener fila, excluir de ruteo) \\
+coordenadas fuera de peru & 0 & 0.00 & candidato a swap lat lon (ver check swapped coords) o descartar si no aplica \\
+lat lon invertidos & 0 & 0.00 & corregir automaticamente (swap) y registrar tasa de recuperación \\
+codigo facility duplicado & 0 & 0.00 & mantener primera ocurrencia descartar resto (documentar criterio de cuál es 'primera') \\
+encoding utf8 vs latin1 & 0 & 0.00 & re-decodificar columnas afectadas y registrar tasa de recuperación \\
+\bottomrule
+\end{tabular}
