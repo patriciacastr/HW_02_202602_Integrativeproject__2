@@ -6,6 +6,8 @@ con capacidad resolutiva (categoría II-1 en adelante) en tres departamentos del
 **Departamentos analizados:** Lambayeque (costa), Ayacucho (andino), San Martín (amazónico).
 Cambiables sin tocar código — ver `config.md`.
 
+**Autoras:** Patricia Castro Hilario, Carla Bocanegra Valentin.
+
 ## Estructura del repositorio
 
 ```
@@ -24,7 +26,7 @@ Cambiables sin tocar código — ver `config.md`.
 │ ├── run_phase2.py # Fase 2 — orquesta muestreo + matrices + comparación entre modos
 │ ├── metrics.py # Fase 3 — funciones puras: acceso, cobertura, Gini, urbano/rural, altitud, KPIs
 │ ├── run_phase3.py # Fase 3 — orquesta el cálculo de todas las métricas y exporta CSVs
-│ └── export.py # Fase 5 — tablas/figuras para el reporte (pendiente)
+│ └── export.py # Fase 5 — genera figuras (PDF) y tablas (LaTeX) desde los CSVs de Fase 1-3
 ├── app/
 │ └── app.py # Fase 4 — dashboard Streamlit (completo)
 ├── data/
@@ -33,8 +35,10 @@ Cambiables sin tocar código — ver `config.md`.
 │ ├── processed/ # salidas limpias de Fase 1 + poligonos.gpkg + routing_cache/ de Fase 2
 │ └── outputs/ # CSVs de calidad de datos, comparación de modos, y métricas de Fase 3
 ├── report/
-│ ├── main.tex # Fase 5 — reporte LaTeX (pendiente)
-│ └── figures/
+│ ├── main.tex # Fase 5 — reporte LaTeX (fuente)
+│ ├── report.pdf # Fase 5 — reporte compilado (vía Overleaf)
+│ ├── figures/ # figuras generadas por src/export.py
+│ └── tables/ # tablas LaTeX generadas por src/export.py
 └── logs/ # logs de ejecución (incluye el reporte de calidad de datos)
 ```
 
@@ -48,6 +52,7 @@ pip install -r requirements.txt
 ```
 
 **Además, para Fase 2 necesitas Docker Desktop instalado y corriendo** (motor de ruteo OSRM).
+**Para Fase 5, necesitas un compilador LaTeX** (Overleaf en la nube, o MiKTeX/TeXLive local).
 
 ## Paso 1 — Descargar datos crudos
 
@@ -135,9 +140,6 @@ y cruce con altitud. Exporta todo a `data/outputs/`.
 
 ## Paso 6 — Correr el dashboard (Fase 4)
 
-No requiere Docker/OSRM corriendo (solo la matriz de auto, ya cacheada, para
-el simulador de escenarios):
-
 ```bash
 streamlit run app/app.py
 ```
@@ -147,8 +149,22 @@ transporte: auto/a pie/bici), capa de establecimientos filtrable, comparación
 espacial de accesibilidad auto-vs-a pie, área de influencia por hospital
 (tiempo de viaje), distribución del tiempo de acceso, ranking de brecha
 crítica descargable, simulador de escenarios (con mapa antes/después), y
-panel de calidad de datos. Filtros de sidebar: departamento, provincia,
-categoría, institución, umbral de tiempo crítico.
+panel de calidad de datos.
+
+## Paso 7 — Generar el reporte (Fase 5)
+
+```bash
+python -m src.export
+```
+
+Genera 9 figuras (PDF vectorial) y 3 tablas (LaTeX, con `df.to_latex()`) en
+`report/figures/` y `report/tables/`, a partir de los CSVs de Fase 1-3 —
+nada se calcula a mano ni se escribe directamente en el `.tex`.
+
+Luego, compila `report/main.tex` a PDF con **Overleaf** (sube el contenido de
+`report/` como "Existing project (.zip)") o con LaTeX local
+(`pdflatex main.tex`, dos o tres veces seguidas para resolver referencias
+cruzadas). El PDF final se guarda como `report/report.pdf`.
 
 ## Hallazgos de Fase 1 (para la sección de limitaciones del reporte)
 
@@ -187,13 +203,26 @@ categoría, institución, umbral de tiempo crítico.
   47.4 min (500-2000m) → 11.1 min (2000-3500m) → 94.2 min (>3500m, puna).
   Relación correlacional, no causal.
 
+## Hallazgo de Fase 5 (limitación importante detectada al generar el reporte)
+
+- **Vacío de cobertura censal en San Martín:** la fuente de población
+  (GeoPerú/INEI) registra el valor 0 en el **100% de los 2,510 centros
+  poblados** de San Martín en su archivo crudo — a diferencia de Lambayeque
+  (1.8% en cero) y Ayacucho (37.5%, deshabitados plausibles), donde ceros
+  aislados son normales. Un 100% de ceros en un departamento completo no es
+  un dato real, sino un vacío de cobertura censal en la Amazonía. Todas las
+  métricas ponderadas por población para San Martín (`metrics.py`) recurren
+  automáticamente a un conteo/promedio simple sin ponderar como respaldo,
+  documentado explícitamente en el reporte y en el código.
+
 ## Estado actual
 
 - [x] Fase 1 completa (acquisition, validation, población, polígonos)
 - [x] Fase 2 completa (grafos OSRM, matrices car/foot/bike, comparación de modos)
 - [x] Fase 3 completa (acceso, cobertura, Gini, urbano/rural, cruce con altitud)
 - [x] Fase 4 completa (dashboard Streamlit: KPIs, mapas, simulador, calidad de datos)
-- [ ] Fase 5 — Reporte LaTeX
+- [x] Fase 5 completa (figuras/tablas generadas por pipeline, reporte LaTeX compilado)
+- [ ] Video de presentación (pendiente)
 
 ## Notas de reproducibilidad
 
@@ -203,12 +232,15 @@ categoría, institución, umbral de tiempo crítico.
 - Las matrices de ruteo se cachean en `data/processed/routing_cache/` — si
   ya existe el archivo de caché, `run_phase2.py` NO recalcula.
 - Todas las funciones de `metrics.py` son puras (DataFrame → DataFrame); el
-  dashboard de Fase 4 solo las llama, sin lógica de cálculo propia.
-- El dashboard maneja el caso de selección vacía en el sidebar sin
-  crashear (muestra un mensaje de advertencia y detiene la ejecución
-  ordenadamente con `st.stop()`).
+  dashboard de Fase 4 y `export.py` de Fase 5 solo las llaman, sin lógica de
+  cálculo propia.
+- Las funciones de `metrics.py` que ponderan por población (`bandas_cobertura`,
+  `contraste_urbano_rural`, `cruce_con_altitud`) caen automáticamente a un
+  cálculo sin ponderar cuando la población total de un subconjunto es 0 (ver
+  "Hallazgo de Fase 5" arriba), en vez de fallar o dividir entre cero.
 - Las columnas `CAPITAL` y `Z` (altitud) de SIGMED vienen tipadas como texto
   en el shapefile original; el código las convierte a numérico explícitamente
   antes de operar. Lo mismo aplica a los IDs (`CODCP`, `COD_IPRESS`) al
-  cruzar CSV con Parquet en el dashboard, por inconsistencias de tipo entre
-  formatos de origen.
+  cruzar CSV con Parquet en el dashboard y en `export.py`.
+- El reporte (`report/main.tex`) se puede compilar con Overleaf (sube
+  `report/` como .zip) o con LaTeX local (`pdflatex main.tex`, 2-3 pasadas).
